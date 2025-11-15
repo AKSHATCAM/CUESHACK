@@ -5,14 +5,19 @@ Provides real-time crowd data to Claude
 
 import asyncio
 import random
+import numpy as np
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # Import sensor modules (will use mock data initially)
 from ..sensors.mock import MockCrowdSimulator
+from ..sensors.audio_clip_processor import AudioClipBuffer, AudioClipProcessor
 
 # Global simulator instance
 simulator = MockCrowdSimulator()
+
+# Global audio clip buffer for real-time processing
+audio_buffer = AudioClipBuffer(sample_rate=22050)
 
 
 async def get_crowd_energy(time_window: int = 5) -> Dict[str, Any]:
@@ -238,3 +243,205 @@ def _generate_context_summary(energy: Dict, mood: Dict, movement: Dict) -> str:
         f"crowd is mostly {mood['dominant_emotion']} "
         f"with {movement['interpretation'].lower()}"
     )
+
+
+async def analyze_audio_clip(
+    audio_data: Optional[np.ndarray] = None,
+    use_mock_data: bool = True
+) -> Dict[str, Any]:
+    """
+    Analyze a 1-second audio clip with people count context
+
+    This tool processes real-time audio and provides comprehensive metrics
+    for the LLM to determine if the audio is acceptable.
+
+    Args:
+        audio_data: 1-second audio clip as numpy array (if None, generates mock data)
+        use_mock_data: Whether to use simulated audio data
+
+    Returns:
+        Dict with audio metrics, people context, and acceptability indicators
+    """
+    # Get current crowd size from simulator
+    crowd_data = simulator.get_current_state()
+    people_count = crowd_data["crowd_size"]
+
+    if use_mock_data or audio_data is None:
+        # Generate mock 1-second audio clip
+        sample_rate = 22050
+        duration = 1.0
+
+        # Create synthetic audio based on current crowd energy
+        energy_level = crowd_data["energy"] / 100.0
+        noise_level = crowd_data["noise_db"] / 100.0
+
+        # Generate base sine wave (music)
+        t = np.linspace(0, duration, int(sample_rate * duration))
+        frequency = 440 * (1 + 0.5 * np.random.random())  # Varying pitch
+        audio = 0.3 * energy_level * np.sin(2 * np.pi * frequency * t)
+
+        # Add harmonic overtones
+        audio += 0.15 * energy_level * np.sin(2 * np.pi * frequency * 2 * t)
+        audio += 0.1 * energy_level * np.sin(2 * np.pi * frequency * 3 * t)
+
+        # Add crowd noise
+        crowd_noise = noise_level * 0.2 * np.random.randn(len(t))
+        audio += crowd_noise
+
+        # Add percussive elements (beats)
+        beat_positions = np.random.choice(len(t), size=int(2 * energy_level), replace=False)
+        for pos in beat_positions:
+            if pos + 100 < len(audio):
+                audio[pos:pos+100] += 0.4 * energy_level * np.exp(-np.arange(100) / 50)
+
+        # Normalize
+        if np.max(np.abs(audio)) > 0:
+            audio = audio / np.max(np.abs(audio)) * 0.7
+
+        audio_data = audio.astype(np.float32)
+
+    # Process the audio clip
+    processor = AudioClipProcessor(sample_rate=22050)
+    metrics = processor.process_clip(audio_data, people_count)
+    result = processor.metrics_to_dict(metrics)
+
+    # Add crowd context for correlation
+    result["crowd_context"] = {
+        "energy_level": crowd_data["energy"],
+        "dominant_mood": max(crowd_data["mood"].items(), key=lambda x: x[1])[0],
+        "noise_db": crowd_data["noise_db"],
+        "movement_intensity": crowd_data["movement"],
+    }
+
+    # Add correlation analysis
+    result["correlation_analysis"] = _analyze_audio_crowd_correlation(result, crowd_data)
+
+    return result
+
+
+def _analyze_audio_crowd_correlation(audio_result: Dict, crowd_data: Dict) -> Dict[str, Any]:
+    """
+    Analyze correlation between audio metrics and crowd behavior
+    Helps LLM understand if audio is appropriate for current crowd state
+    """
+    correlations = []
+
+    # Check if audio energy matches crowd energy
+    audio_energy = audio_result["amplitude"]["rms_energy"]
+    crowd_energy = crowd_data["energy"] / 100.0
+
+    energy_match = abs(audio_energy - crowd_energy * 0.7)  # Expected scaling
+    if energy_match < 0.2:
+        correlations.append("Audio energy matches crowd energy well")
+    elif audio_energy > crowd_energy * 0.7:
+        correlations.append("Audio may be too loud for current crowd energy")
+    else:
+        correlations.append("Audio may be too quiet for current crowd energy")
+
+    # Check if beat strength matches movement
+    beat_strength = audio_result["rhythm"]["beat_strength"]
+    movement = crowd_data["movement"] / 100.0
+
+    if beat_strength > 0.5 and movement > 0.6:
+        correlations.append("Strong beat matches high crowd movement - good sync")
+    elif beat_strength > 0.5 and movement < 0.3:
+        correlations.append("Strong beat but low movement - crowd may not be responding")
+
+    # Check harmonic content vs mood
+    harmonic_ratio = audio_result["content"]["harmonic_ratio"]
+    dominant_mood = max(crowd_data["mood"].items(), key=lambda x: x[1])[0]
+
+    if harmonic_ratio > 0.5 and dominant_mood in ["happy", "excited"]:
+        correlations.append("Musical content aligns with positive crowd mood")
+    elif harmonic_ratio < 0.3 and dominant_mood == "confused":
+        correlations.append("Low musical content may be confusing the crowd")
+
+    return {
+        "energy_correlation": "good" if energy_match < 0.2 else "needs_adjustment",
+        "beat_movement_sync": "synchronized" if beat_strength > 0.5 and movement > 0.5 else "unsynchronized",
+        "mood_music_alignment": "aligned" if harmonic_ratio > 0.4 else "misaligned",
+        "observations": correlations,
+        "overall_match": "good" if len([c for c in correlations if "good" in c or "matches" in c or "aligns" in c]) >= 2 else "needs_review"
+    }
+
+
+async def get_audio_acceptability_check() -> Dict[str, Any]:
+    """
+    Get a complete audio acceptability check with LLM-ready analysis
+
+    This is a convenience tool that combines audio analysis with
+    structured recommendations for the LLM to make decisions
+
+    Returns:
+        Dict with audio analysis and decision-making guidance
+    """
+    # Get audio analysis
+    audio_analysis = await analyze_audio_clip(use_mock_data=True)
+
+    # Extract key decision points
+    acceptability = audio_analysis["acceptability_indicators"]
+    correlation = audio_analysis["correlation_analysis"]
+
+    return {
+        "audio_analysis": audio_analysis,
+        "decision_framework": {
+            "is_acceptable": acceptability["acceptable"],
+            "quality_score": acceptability["quality_score"],
+            "critical_issues": acceptability["issues"],
+            "warnings": acceptability["warnings"],
+            "crowd_match": correlation["overall_match"],
+            "recommendation": acceptability["recommendation"],
+        },
+        "llm_guidance": {
+            "should_keep_playing": acceptability["acceptable"] and correlation["overall_match"] == "good",
+            "suggested_actions": _generate_suggested_actions(acceptability, correlation),
+            "reasoning_points": _generate_reasoning_points(audio_analysis),
+        },
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+def _generate_suggested_actions(acceptability: Dict, correlation: Dict) -> list:
+    """Generate action suggestions for the LLM"""
+    actions = []
+
+    if not acceptability["acceptable"]:
+        actions.append("STOP: Audio quality issues detected - switch track")
+
+    if correlation["energy_correlation"] == "needs_adjustment":
+        actions.append("Adjust volume to match crowd energy")
+
+    if correlation["beat_movement_sync"] == "unsynchronized":
+        actions.append("Consider changing to track with different tempo")
+
+    if correlation["mood_music_alignment"] == "misaligned":
+        actions.append("Music style may not match crowd mood")
+
+    if len(actions) == 0:
+        actions.append("CONTINUE: Audio is acceptable and matches crowd")
+
+    return actions
+
+
+def _generate_reasoning_points(audio_analysis: Dict) -> list:
+    """Generate reasoning points for LLM explanation"""
+    points = []
+
+    # Audio quality
+    quality = audio_analysis["quality"]
+    if quality["clipping_detected"]:
+        points.append("Audio clipping indicates distortion or overdriving")
+    if quality["silence_ratio"] > 0.5:
+        points.append(f"Audio is {quality['silence_ratio']*100:.1f}% silent")
+
+    # Content analysis
+    content = audio_analysis["content"]
+    points.append(f"Harmonic ratio: {content['harmonic_ratio']:.2f} (musical content)")
+    points.append(f"Percussive ratio: {content['percussive_ratio']:.2f} (rhythm/beats)")
+
+    # People context
+    context = audio_analysis["context"]
+    points.append(f"Audio energy per person: {context['energy_per_person']:.4f}")
+    points.append(f"Current crowd: {context['people_count']} people")
+
+    return points
