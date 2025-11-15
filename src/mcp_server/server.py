@@ -27,6 +27,8 @@ from .tools import (
     get_crowd_density,
     get_time_context,
     get_full_context,
+    analyze_audio_clip,
+    get_audio_acceptability_check,
 )
 
 
@@ -119,6 +121,33 @@ class AIDJMCPServer:
                         "properties": {},
                     },
                 ),
+                Tool(
+                    name="analyze_audio_clip",
+                    description="Analyze a 1-second audio clip with people count context. "
+                    "Returns comprehensive audio metrics including amplitude, frequency, rhythm, "
+                    "quality indicators, and correlation with crowd behavior. "
+                    "Use this to understand if the current audio is appropriate.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "use_mock_data": {
+                                "type": "boolean",
+                                "description": "Whether to use simulated audio data (default: true)",
+                                "default": True,
+                            }
+                        },
+                    },
+                ),
+                Tool(
+                    name="get_audio_acceptability_check",
+                    description="Get a complete audio acceptability check with LLM-ready analysis. "
+                    "Returns structured decision framework with quality score, issues, warnings, "
+                    "and recommended actions. Use this to quickly determine if audio is acceptable.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                    },
+                ),
             ]
 
         @self.server.call_tool()
@@ -140,6 +169,11 @@ class AIDJMCPServer:
                     result = await get_time_context()
                 elif name == "get_full_context":
                     result = await get_full_context()
+                elif name == "analyze_audio_clip":
+                    use_mock = arguments.get("use_mock_data", True)
+                    result = await analyze_audio_clip(use_mock_data=use_mock)
+                elif name == "get_audio_acceptability_check":
+                    result = await get_audio_acceptability_check()
                 else:
                     raise ValueError(f"Unknown tool: {name}")
 
