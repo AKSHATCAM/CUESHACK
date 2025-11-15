@@ -1,0 +1,50 @@
+# Core AI & MCP
+anthropic>=0.18.0
+mcp>=0.9.0
+
+# Web Framework & API
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+websockets>=12.0
+python-multipart>=0.0.9
+
+# Music Integration
+spotipy>=2.23.0
+requests>=2.31.0
+
+# Audio Processing
+pyaudio>=0.2.14
+librosa>=0.10.1
+soundfile>=0.12.1
+numpy>=1.26.0
+
+# Computer Vision
+opencv-python>=4.9.0
+opencv-contrib-python>=4.9.0
+mediapipe>=0.10.9
+deepface>=0.0.79
+tf-keras>=2.15.0
+tensorflow>=2.15.0
+
+# Data Processing
+pandas>=2.2.0
+scikit-learn>=1.4.0
+
+# Utilities
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-jose[cryptography]>=3.3.0
+httpx>=0.26.0
+
+# Development
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+black>=24.0.0
+ruff>=0.1.0
+mypy>=1.8.0
+
+# Logging & Monitoring
+loguru>=0.7.2
+prometheus-client>=0.19.0
